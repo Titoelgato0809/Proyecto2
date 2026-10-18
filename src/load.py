@@ -71,7 +71,7 @@ def save_to_mysql(df, table_name):
         df.to_sql(
             table_name,
             engine,
-            if_exists='append',
+            if_exists='append'z,
             index=False
         )
 
