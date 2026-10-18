@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUTA_CREATE_DW = PROJECT_ROOT / "sql" / "create_dw.sql"
@@ -11,44 +11,55 @@ RUTA_CREATE_DW = PROJECT_ROOT / "sql" / "create_dw.sql"
 load_dotenv(PROJECT_ROOT / ".env")
 
 DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_PORT = os.environ.get("DB_PORT", "3306")
-DB_USER = os.environ.get("DB_USER", "root")
+DB_PORT = os.environ.get("DB_PORT", "5432")
+DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 DB_NAME = os.environ.get("DB_NAME", "icbf_primera_infancia_dw")
 
 
 def crear_engine(incluir_base_de_datos: bool = True):
+    """Crea el engine de SQLAlchemy para conectarse a PostgreSQL.
+
+    Si incluir_base_de_datos=False, se conecta a la base por defecto
+    'postgres'.
     """
-    Crea el engine de SQLAlchemy para conectarse a MySQL.
-    Si incluir_base_de_datos=False, se conecta al servidor MySQL
-    sin seleccionar ninguna base (necesario antes de que la base
-    de datos exista).
-    """
-    base = f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}"
-    if incluir_base_de_datos:
-        base += f"/{DB_NAME}"
+    db_target = DB_NAME if incluir_base_de_datos else "postgres"
+    base = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{db_target}"
     return create_engine(base)
 
 
 def crear_esquema():
-    """
-    Ejecuta sql/create_dw.sql para crear la base de datos y las
-    tablas (dimensiones + hechos) si no existen todavía.
-    """
+    """Crea la base de datos si no existe y ejecuta sql/create_dw.sql."""
     if not RUTA_CREATE_DW.exists():
-        raise FileNotFoundError(f"No se encontró el archivo DDL en: {RUTA_CREATE_DW}")
+        raise FileNotFoundError(
+            f"No se encontró el archivo DDL en: {RUTA_CREATE_DW}"
+        )
 
+    # 1. Crear la base de datos si no existe
+    engine_maint = crear_engine(incluir_base_de_datos=False).execution_options(
+        isolation_level="AUTOCOMMIT"
+    )
+    with engine_maint.connect() as conn:
+        result = conn.execute(
+            text(f"SELECT 1 FROM pg_database WHERE datname='{DB_NAME}'")
+        )
+        if not result.scalar():
+            conn.execute(text(f"CREATE DATABASE {DB_NAME}"))
+            print(f"Base de datos '{DB_NAME}' creada.")
+    engine_maint.dispose()
+
+    # 2. Ejecutar script DDL en la base de datos del proyecto
     with open(RUTA_CREATE_DW, "r", encoding="utf-8") as f:
         script_sql = f.read()
 
-    engine = crear_engine(incluir_base_de_datos=False)
+    engine_dw = crear_engine(incluir_base_de_datos=True)
     sentencias = [s.strip() for s in script_sql.split(";") if s.strip()]
 
-    with engine.begin() as conexion:
+    with engine_dw.begin() as conexion:
         for sentencia in sentencias:
             conexion.execute(text(sentencia))
 
-    engine.dispose()
+    engine_dw.dispose()
     print("Esquema del Data Warehouse creado (o ya existente).")
 
 
@@ -59,27 +70,18 @@ def save_to_csv(df, file_path):
     print(f"Total de filas guardadas: {df.shape[0]}")
 
 
-def save_to_mysql(df, table_name):
-    """
-    Inserta un DataFrame completo en la tabla indicada del Data
-    Warehouse, usando crear_engine() (conexión real a MySQL),
-    no una ruta de archivo.
-    """
+def save_to_postgres(df, table_name):
+    """Inserta un DataFrame completo en la tabla indicada del Data Warehouse en PostgreSQL."""
     engine = crear_engine(incluir_base_de_datos=True)
 
     try:
-        df.to_sql(
-            table_name,
-            engine,
-            if_exists='append'z,
-            index=False
-        )
+        df.to_sql(table_name, engine, if_exists="append", index=False)
 
-        print(f"Datos guardados en MySQL: tabla {table_name}")
+        print(f"Datos guardados en PostgreSQL: tabla {table_name}")
         print(f"Total de filas cargadas: {df.shape[0]}")
 
     except Exception as e:
-        print(f"ERROR al guardar la tabla '{table_name}' en MySQL: {e}")
+        print(f"ERROR al guardar la tabla '{table_name}' en PostgreSQL: {e}")
         raise
 
     finally:
@@ -87,11 +89,7 @@ def save_to_mysql(df, table_name):
 
 
 def reset_schema():
-    """
-    Vacía los datos de las tablas (TRUNCATE) sin borrar su estructura,
-    para poder correr el ETL varias veces sin errores de duplicados
-    ni perder las PK/FK/UNIQUE definidas en create_dw.sql.
-    """
+    """Vacía los datos de las tablas (TRUNCATE) reiniciando llaves primarias sin borrar la estructura."""
     tablas = [
         "fact_atencion",
         "dim_geography",
@@ -101,15 +99,17 @@ def reset_schema():
         "dim_attention_status",
     ]
     engine = crear_engine(incluir_base_de_datos=True)
+    tablas_str = ", ".join(tablas)
+
     with engine.begin() as conn:
-        conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
-        for tabla in tablas:
-            try:
-                conn.execute(text(f"TRUNCATE TABLE {tabla}"))
-            except Exception:
-                pass  # si la tabla aún no existe (primera vez), no pasa nada
-        conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+        try:
+            conn.execute(
+                text(f"TRUNCATE TABLE {tablas_str} RESTART IDENTITY CASCADE;")
+            )
+        except Exception as e:
+            print(f"Aviso en reset_schema: {e}")
+
     engine.dispose()
-    print("Tablas vaciadas correctamente (estructura conservada).")
-    
-    
+    print(
+        "Tablas vaciadas y secuencias reiniciadas correctamente (estructura conservada)."
+    )

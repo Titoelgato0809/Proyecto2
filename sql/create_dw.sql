@@ -1,16 +1,9 @@
-CREATE DATABASE IF NOT EXISTS icbf_primera_infancia_dw
-CHARACTER SET utf8mb4
-COLLATE utf8mb4_unicode_ci;
-
-USE icbf_primera_infancia_dw;
-
-
 -- =========================================================
 -- DIMENSIÓN GEOGRAFÍA
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS dim_geography (
-    geography_key INT AUTO_INCREMENT PRIMARY KEY,
+    geography_key SERIAL PRIMARY KEY,
 
     codigo_departamento_uds INT NOT NULL,
     departamento_uds VARCHAR(100) NOT NULL,
@@ -28,7 +21,7 @@ CREATE TABLE IF NOT EXISTS dim_geography (
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS dim_service_unit (
-    service_unit_key INT AUTO_INCREMENT PRIMARY KEY,
+    service_unit_key SERIAL PRIMARY KEY,
 
     codigo_unidad_servicio BIGINT NOT NULL,
     unidad_servicio VARCHAR(255) NOT NULL,
@@ -41,7 +34,7 @@ CREATE TABLE IF NOT EXISTS dim_service_unit (
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS dim_service (
-    service_key INT AUTO_INCREMENT PRIMARY KEY,
+    service_key SERIAL PRIMARY KEY,
 
     nombre_servicio VARCHAR(255) NOT NULL,
     tipo_servicio VARCHAR(100) NOT NULL
@@ -53,7 +46,7 @@ CREATE TABLE IF NOT EXISTS dim_service (
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS dim_beneficiary_profile (
-    beneficiary_profile_key INT AUTO_INCREMENT PRIMARY KEY,
+    beneficiary_profile_key SERIAL PRIMARY KEY,
 
     sexo VARCHAR(5) NOT NULL,
     rango_edad VARCHAR(50) NOT NULL,
@@ -70,7 +63,7 @@ CREATE TABLE IF NOT EXISTS dim_beneficiary_profile (
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS dim_attention_status (
-    attention_status_key INT AUTO_INCREMENT PRIMARY KEY,
+    attention_status_key SERIAL PRIMARY KEY,
 
     estado_atencion VARCHAR(50) NOT NULL,
     descripcion VARCHAR(100) NOT NULL
@@ -82,7 +75,7 @@ CREATE TABLE IF NOT EXISTS dim_attention_status (
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS fact_atencion (
-    fact_key INT AUTO_INCREMENT PRIMARY KEY,
+    fact_key SERIAL PRIMARY KEY,
 
     geography_key INT NOT NULL,
     service_unit_key INT NOT NULL,
