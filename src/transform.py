@@ -1,6 +1,28 @@
 import pandas as pd
 
 
+# =============================================================
+# CONSTANTES DE LA FUENTE API (Sisbén)
+# =============================================================
+
+# Umbral mínimo de registros muestrales para publicar una razón
+# (DQ-A8). Es una convención estadística, no un valor ajustado
+# a los datos actuales.
+UMBRAL_MUESTRA = 30
+
+# El Sisbén codifica la zona como 1 o 2; el ICBF usa texto.
+MAPA_ZONA_SISBEN = {
+    1: "CABECERA",
+    2: "RESTO",
+}
+
+COLUMNAS_API = {"cod_mpio", "zona", "grupo", "sum_fex", "count", "corte"}
+
+
+# =============================================================
+# FUENTE 1: ICBF (archivo)
+# =============================================================
+
 def transformar(df):
     """
     Transformación y preparación del dataset.
@@ -11,14 +33,20 @@ def transformar(df):
     - Preparar identificadores.
     - Preparar valores faltantes.
     - Crear atributos derivados justificados.
+    - Derivar la llave de integración con la API del Sisbén.
 
     No realiza agregaciones ni cálculos de KPIs.
+
+    Las transformaciones llevan el ID de la tabla de la sección 13
+    (T1 a T9). Las reglas de calidad (dominios, coherencia de
+    códigos, cobertura de la llave) se evalúan en las compuertas
+    de validación y no se corrigen aquí.
     """
 
     df = df.copy()
 
     # =========================================================
-    # 1. IDENTIFICADORES
+    # 1. IDENTIFICADORES (T1)
     # =========================================================
 
     # Los códigos territoriales son identificadores.
@@ -46,7 +74,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 2. VIGENCIA
+    # 2. VIGENCIA (T2)
     # =========================================================
 
     # No es una fecha. Es un identificador de vigencia
@@ -58,7 +86,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 3. VARIABLE NUMÉRICA PRINCIPAL
+    # 3. VARIABLE NUMÉRICA PRINCIPAL (T3)
     # =========================================================
 
     df["Beneficiarios"] = pd.to_numeric(
@@ -82,7 +110,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 4. ESTANDARIZACIÓN DE VARIABLES CATEGÓRICAS
+    # 4. ESTANDARIZACIÓN DE VARIABLES CATEGÓRICAS (T4)
     # =========================================================
 
     columnas_categoricas = [
@@ -115,7 +143,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 5. NORMALIZACIÓN DE ESTADO DE ATENCIÓN
+    # 5. NORMALIZACIÓN DE ESTADO DE ATENCIÓN (T5)
     # =========================================================
 
     # El origen utiliza:
@@ -154,7 +182,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 6. CATEGORÍAS FALTANTES
+    # 6. CATEGORÍAS FALTANTES (T6)
     # =========================================================
 
     # Estos faltantes sí se conservan explícitamente como
@@ -183,7 +211,7 @@ def transformar(df):
 
 
     # =========================================================
-    # 7. ATRIBUTO DERIVADO JUSTIFICADO
+    # 7. ATRIBUTO DERIVADO JUSTIFICADO (T7)
     # =========================================================
 
     # R3 requiere trabajar con el tipo de servicio.
@@ -227,6 +255,23 @@ def transformar(df):
 
 
     # =========================================================
+    # 7b. LLAVE DE INTEGRACIÓN CON LA API (T8)
+    # =========================================================
+
+    # El código DANE de municipio tiene 5 caracteres. El ICBF lo
+    # entrega como entero y pierde el cero inicial (5001 en lugar
+    # de 05001). Se deriva una columna de texto de 5 caracteres
+    # para unir con cod_mpio del Sisbén. El código original se
+    # conserva. Si el resultado no tiene 5 dígitos, no se corrige:
+    # lo detecta la validación de datos preparados.
+    df["Codigo Municipio DANE"] = (
+        df["Codigo Municipio UDS"]
+        .astype("string")
+        .str.zfill(5)
+    )
+
+
+    # =========================================================
     # 8. TIPOS CATEGÓRICOS
     # =========================================================
 
@@ -237,8 +282,8 @@ def transformar(df):
         df[columna] = df[columna].astype("category")
         
     # =========================================================
-    # 9. Seleccionar dataset para trabajar 
-    # =======================================================
+    # 9. SELECCIÓN DEL DATASET DEFINITIVO (T9)
+    # =========================================================
     
     def dataset_definitivo(df):
 
@@ -248,6 +293,7 @@ def transformar(df):
             "Departamento UDS",
             "Codigo Municipio UDS",
             "Municipio UDS",
+            "Codigo Municipio DANE",
             "Codigo CentroZonal UDS",
             "Centro Zonal UDS",
 
@@ -268,6 +314,10 @@ def transformar(df):
             "Pais Nacimiento",
             "Estado Atención",
 
+            # Referencia temporal (se conserva para trazabilidad
+            # y para documentar el desfase con el corte del Sisbén)
+            "Vigencia",
+
             # Medida principal
             "Beneficiarios"
         ]
@@ -278,3 +328,120 @@ def transformar(df):
     df = dataset_definitivo(df)
 
     return df
+
+
+# =============================================================
+# FUENTE 2: API Sisbén (DNP Sisbén Personas)
+# =============================================================
+
+def transformar_sisben(df):
+    """
+    Transformación de la extracción agregada de la API.
+
+    Entrada: columnas cod_mpio, zona, grupo, sum_fex, count y corte,
+    todas como texto.
+
+    Responsabilidades:
+    - Convertir tipos (T10).
+    - Armonizar la zona con el vocabulario del ICBF (T11).
+    - Marcar, sin eliminar, los pares con muestra insuficiente (T12).
+    - Renombrar al lenguaje del modelo dimensional (T13).
+
+    No modifica datos para que una validación pase: el formato del
+    código y los dominios se validan antes, en la compuerta
+    API Raw Validation.
+    """
+
+    df = df.copy()
+
+    faltantes = COLUMNAS_API - set(df.columns)
+    if faltantes:
+        raise ValueError(f"Columnas ausentes en la API: {faltantes}")
+
+    # =========================================================
+    # 1. TIPOS (T10)
+    # =========================================================
+
+    # El código DANE es un identificador: se conserva como texto
+    # de 5 caracteres, sin corregirlo aquí.
+    df["cod_mpio"] = df["cod_mpio"].astype("string").str.strip()
+
+    df["zona"] = pd.to_numeric(df["zona"], errors="raise").astype("Int64")
+
+    # sum_fex es la suma de factores de expansión (población
+    # estimada): admite decimales.
+    df["sum_fex"] = pd.to_numeric(df["sum_fex"], errors="raise")
+
+    df["count"] = pd.to_numeric(df["count"], errors="raise").astype("Int64")
+
+    for columna in ["grupo", "corte"]:
+        df[columna] = (
+            df[columna]
+            .astype("string")
+            .str.strip()
+            .str.upper()
+        )
+
+    # =========================================================
+    # 2. ARMONIZACIÓN DE LA ZONA (T11)
+    # =========================================================
+
+    # Un código desconocido no se adivina.
+    zonas_invalidas = set(df["zona"].dropna().unique()) - set(MAPA_ZONA_SISBEN)
+
+    if zonas_invalidas:
+        raise ValueError(
+            f"Valores inesperados en zona: {zonas_invalidas}"
+        )
+
+    df["nombre_zona"] = df["zona"].map(MAPA_ZONA_SISBEN)
+
+    # =========================================================
+    # 3. MARCA DE MUESTRA SUFICIENTE (T12)
+    # =========================================================
+
+    # Se marca, no se elimina. La exclusión ocurre al calcular
+    # la razón de R6 y R7.
+    df["muestra_suficiente"] = df["count"] >= UMBRAL_MUESTRA
+
+    # =========================================================
+    # 4. NOMBRES DEL MODELO DIMENSIONAL (T13)
+    # =========================================================
+
+    df = df.rename(columns={
+        "cod_mpio": "codigo_municipio_dane",
+        "zona": "codigo_zona_sisben",
+        "sum_fex": "poblacion_ponderada",
+        "count": "registros_muestrales",
+        "corte": "corte_fuente",
+    })
+
+    columnas_definitivas = [
+        "codigo_municipio_dane",
+        "codigo_zona_sisben",
+        "nombre_zona",
+        "grupo",
+        "poblacion_ponderada",
+        "registros_muestrales",
+        "corte_fuente",
+        "muestra_suficiente",
+    ]
+
+    return df[columnas_definitivas].copy()
+
+
+# =============================================================
+# PUNTO DE ENTRADA ÚNICO
+# =============================================================
+
+def transformar_fuentes(df_icbf_raw, df_api_raw):
+    """
+    Transforma las dos fuentes y devuelve (df_icbf, df_api).
+
+    Cada rama se transforma de forma independiente: la integración
+    ocurre después, en dimensional_model.construir_modelo(), a
+    través de las dimensiones conformadas. Aquí no se unen.
+    """
+    df_icbf = transformar(df_icbf_raw)
+    df_api = transformar_sisben(df_api_raw)
+    return df_icbf, df_api
