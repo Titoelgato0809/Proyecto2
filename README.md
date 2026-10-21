@@ -30,7 +30,8 @@
 19. [Cómo reproducir el proyecto](#19-cómo-reproducir-el-proyecto)
 20. [Estructura del repositorio](#20-estructura-del-repositorio)
 21. [Registro de cambios (primera → segunda entrega)](#21-registro-de-cambios-primera--segunda-entrega)
-22. [Equipo y responsabilidades](#22-equipo-y-responsabilidades)
+22. [Pruebas de confiabilidad y evidencia](#22-pruebas-de-confiabilidad-y-evidencia)
+23. [Equipo y responsabilidades](#23-equipo-y-responsabilidades)
 
 ---
 
@@ -71,6 +72,24 @@ que aporten a la planificación de acciones de primera infancia y del ODS 2.
 | **R5** | Cruce territorio × vulnerabilidad (etnia, discapacidad, zona rural) | ¿Dónde coinciden varios factores de vulnerabilidad? | ICBF |
 | **R6** | Municipios con mayor y menor atención del ICBF en relación con su población vulnerable (Sisbén A y B) | ¿Qué municipios están más y menos atendidos respecto a su población vulnerable? | ICBF + API Sisbén |
 | **R7** | Si la distribución urbano-rural de la atención es proporcional a la de la población vulnerable | ¿Está la atención sesgada hacia la zona urbana o la rural frente a la necesidad? | ICBF + API Sisbén |
+
+### 2.1 Línea base de la primera entrega y estado de R1–R5
+
+- **Repositorio de la primera entrega (se conserva intacto):** _[pegar aquí la URL del repositorio de la 1.ª entrega]_
+- **Línea base:** Data Warehouse dimensional en MySQL con una tabla de hechos (`fact_atencion`), cinco
+  dimensiones y un dashboard en Power BI ([`docs/Dashboard.pbix`](docs/Dashboard.pbix)) para R1–R5,
+  construido solo con el dataset del ICBF.
+- **Modelo dimensional previo:** ver la sección 21 (registro de cambios) y la figura de la sección 11.
+
+| Req. | Estado | Cambio introducido | Justificación | Salida analítica en la 2.ª entrega |
+|---|---|---|---|---|
+| R1 | **Mantiene** | Ninguno | Sigue siendo válido y no depende de la nueva fuente | Distribución de beneficiarios por departamento y % de participación |
+| R2 | **Mantiene** | Ninguno | Sigue siendo válido | Top 5 de municipios dentro de cada departamento |
+| R3 | **Mantiene** | Ninguno | Sigue siendo válido | Tipos de servicio con más beneficiarios y su variación por departamento |
+| R4 | **Mantiene** | Solo se retiró `zona_ubicacion` de `dim_beneficiary_profile`, atributo que R4 no usa | La zona pasó a ser un eje conformado compartido por ambos hechos | Caracterización por sexo, rango de edad, grupo étnico y discapacidad |
+| R5 | **Refina** | La zona rural ya no sale del perfil del beneficiario sino de `dim_zone` por `zone_key` | Requerido por el nuevo requerimiento R7, que necesita la zona como dimensión conformada | Concentración de etnia, discapacidad y zona rural por departamento. El resultado debe ser el mismo |
+
+Ningún requisito de R1–R5 fue eliminado ni reemplazado.
 
 ## 3. Alineación con el ODS
 
@@ -348,6 +367,24 @@ No se creó dimensión de tiempo: `Vigencia` tiene un único valor (2025) y el c
 | R6 | `fact_atencion` + `fact_vulnerable_population` | `dim_municipality`; `dim_sisben_group` filtrado a A y B | Beneficiarios por cada 1.000 personas A+B ponderadas y ranking | Nuevo. Drill-across por `municipality_key`; umbral de 30 registros (DQ-A8) |
 | R7 | `fact_atencion` + `fact_vulnerable_population` | `dim_zone`, `dim_municipality` (hasta departamento); `dim_sisben_group` filtrado a A y B | Brecha en puntos porcentuales = % de beneficiarios en zona rural − % de personas A+B en zona rural | Nuevo. Los `SIN INFORMACIÓN` se excluyen y se reportan aparte |
 
+### 12.1 Matriz de trazabilidad extremo a extremo (filas representativas)
+
+Cadena: requerimiento → dato → fuente → riesgo → regla → expectativa GX → transformación/integración →
+elemento del DW → KPI o visualización.
+
+| Req. | Dato requerido | Fuente | Riesgo de calidad | Regla DQ | Expectativa GX (tipo) | Transformación / integración | Elemento del DW | KPI o visualización |
+|---|---|---|---|---|---|---|---|---|
+| R6, R7 | `cod_mpio` | API Sisbén | Código con menos de 5 caracteres: la llave no cruza | DQ-A2 (Crítica) | Coincidencia con expresión regular de 5 dígitos | Integración por `codigo_municipio_dane` (sin corregir en el transform) | `dim_municipality` | Ranking de R6 |
+| R6, R7 | `(cod_mpio, zona, grupo)` | API Sisbén | Fila repetida duplica la población estimada | DQ-A5 (Crítica) | Unicidad compuesta de las tres columnas | T7: carga al grano municipio × zona × grupo | `fact_vulnerable_population` | Denominador de R6 y base del % rural de R7 |
+| R6 | `count` por municipio y zona | API Sisbén | Muestra pequeña vuelve inestable la razón | DQ-A8 (Advertencia) | Mínimo de registros por par municipio–zona | T8: bandera `muestra_suficiente` (no se eliminan filas) | `vw_r6_atencion_vs_vulnerabilidad` | Indicador de fiabilidad en el ranking de R6 |
+| R7 | `zona` | API Sisbén | Valor fuera de {1, 2} rompe el mapeo urbano/rural | DQ-A3 (Crítica) | Valor dentro de un conjunto | T3: 1 → CABECERA, 2 → RESTO | `dim_zone` | Brecha urbano-rural de R7 |
+| R6, R7 | `Codigo Municipio UDS` | ICBF | Código sin relleno no coincide con el DANE | DQ-P2 (Crítica) y DQ-I1 | Código numérico y consistente con el departamento (DQ-P2) | T1: relleno a 5 caracteres | `dim_municipality` | Cobertura de la llave (99,56 %) |
+| R1–R7 | `total_beneficiarios`, `poblacion_ponderada` | Ambas | La carga pierde o duplica filas | DQ-I5 (Crítica) | Reconciliación de sumas y conteos | T9: llaves sustitutas y carga al grano | `fact_atencion`, `fact_vulnerable_population` | Todos los KPI del dashboard |
+
+> Las expectativas GX se describen por tipo. Los nombres exactos de cada expectativa están en
+> [`gx/validate_icbf.py`](gx/validate_icbf.py) y [`gx/validate_sisben.py`](gx/validate_sisben.py).
+> DQ-I1 a DQ-I7 se implementan con reglas propias en `src/validation.py` (sección 13).
+
 ## 13. Pipeline ETL y compuertas de calidad
 
 | Etapa | Módulo | Responsabilidad |
@@ -371,6 +408,58 @@ No se creó dimensión de tiempo: `Vigencia` tiene un único valor (2025) y el c
 5. Es repetible: cada corrida deja el DW igual a la fuente, sin duplicar filas.
 6. La carga **nunca** recrea el esquema por defecto; `crear_esquema()` es una acción aparte y
    destructiva (`recrear_esquema=True` o `--recrear-esquema` al ejecutar `load.py` directamente).
+
+### 13.1 Diseño de Great Expectations
+
+| Elemento GX | Decisión |
+|---|---|
+| **Objeto de datos** | ICBF: tabla cruda leída por `extract_data_icbf`. Sisbén: Parquet agregado `data/staging/raw_sisben_agregado.parquet` con su `.meta.json` |
+| **Expectativa** | Cada expectativa implementa una regla con su ID (DQ-P y DQ-A, secciones 6.2 y 6.4). El umbral (por ejemplo, mínimo de 30 en DQ-A8) va como parámetro |
+| **Suite** | Una suite por fuente y capa: ICBF crudo y Sisbén crudo. Agrupa reglas del mismo objeto de datos |
+| **Definición de validación** | Asocia el objeto de datos de cada fuente con su suite para poder repetir la ejecución |
+| **Ejecución controlada** | La invoca la tarea `validate_data_extract_*` del DAG y devuelve el resultado a Airflow |
+| **Resultado** | Éxito o fallo por regla, con conteos y porcentajes inesperados y ejemplos de valores |
+| **Respuesta del pipeline** | Crítica: la tarea falla y la rama se detiene. Advertencia: se registra y continúa. Informativa: solo se monitorea |
+
+La compuerta 3 (DQ-I) valida el modelo ya construido con reglas propias en `src/validation.py`,
+porque necesita cruzar tablas (integridad referencial y reconciliación).
+
+### 13.2 Interfaces entre tareas
+
+Airflow solo orquesta: entre tareas viajan **rutas y metadatos compactos**, no DataFrames ni XCom
+masivos.
+
+| Tarea | Entrada | Salida |
+|---|---|---|
+| `extract_data_icbf` | `data/raw/DatasetCompleto.csv` | Parquet en `data/staging/` (ruta) |
+| `extract_data_sisben` | Consulta SODA configurada en `src/extract_sisben.py` | `raw_sisben_agregado.parquet` + `.meta.json` (marca de tiempo, endpoint, filas, páginas) |
+| `validate_data_extract_*` | Ruta del Parquet de su rama | Resultado de la validación; falla la tarea si hay violación Crítica |
+| `transform_data` | Rutas de ambos Parquet validados | Parquet preparados (`icbf_prepared.parquet`, `sisben_prepared.parquet`) |
+| `validate_data_transform` | Rutas de los Parquet preparados | Modelo construido y resultado de DQ-I; falla si hay violación Crítica |
+| `load_data` | Rutas de las tablas del modelo | DW cargado y reconciliado; `ROLLBACK` si algo no cuadra |
+
+- **Identidad del lote:** la marca de tiempo y los metadatos del `.meta.json` identifican la extracción
+  evaluada; la ejecución del DAG (`run_id`) identifica la corrida.
+- **Señal de falla:** una violación Crítica o una excepción hace fallar la tarea y las dependientes
+  quedan en `upstream_failed`.
+- **Reejecución:** la carga es idempotente (ver sección 22.3).
+
+### 13.3 Política de fallas y reintentos
+
+Se distinguen las fallas transitorias de las deterministas. Un reintento solo tiene sentido si el mismo
+código con la misma entrada puede tener éxito más tarde.
+
+| Condición | Tipo o severidad | Respuesta del pipeline | Reintento | Justificación |
+|---|---|---|---|---|
+| Timeout, error de conexión, 429 o 5xx de la API | Transitoria | Se reintenta dentro de `extract_sisben` con espera exponencial (2, 4, 8 s) | Sí, acotado | La API puede recuperarse; sin token los límites son más bajos |
+| 400, 401, 403 o 404 de la API | Determinista | Detiene la rama de la API | No | Repetir reproduce el error (consulta o permisos mal configurados) |
+| Violación Crítica DQ-A o DQ-P | Crítica | Falla la validación; la rama no pasa a transformación | No | Los datos no cambian al repetir; exige corrección o recuperación explícita |
+| Violación Crítica DQ-I | Crítica | Falla la compuerta 3; no se carga el DW | No | Evita cargar datos inseguros |
+| Advertencia (DQ-A7, DQ-A8, DQ-I1 entre 95 y 100 %, DQ-I2, DQ-P5 a DQ-P7) | Advertencia | Continúa con la evidencia registrada y la política documentada | No | No invalida el lote |
+| Falla de conexión a PostgreSQL durante la carga | Transitoria | La transacción hace `ROLLBACK`; el DW queda como estaba | Reintento acotado | Seguro por la idempotencia de la carga |
+
+> Antes de entregar, confirmar que los valores `retries` y `retry_delay` del DAG
+> (`dags/reliable_ods2.py`) coincidan con esta tabla y que las tareas de validación no tengan reintentos.
 
 ## 14. Data Warehouse (PostgreSQL)
 
@@ -777,14 +866,78 @@ Proyecto2/
    con tres compuertas de calidad; carga con `TRUNCATE` → carga transaccional con *advisory lock*,
    reconciliación y `ROLLBACK`.
 
-## 22. Equipo y responsabilidades
+## 22. Pruebas de confiabilidad y evidencia
 
-| Integrante | Responsabilidad |
+Las capturas van en `docs/evidence/`. Cada una debe estar recortada y acompañada de una interpretación.
+
+### 22.1 Prueba A — Ejecución exitosa
+
+Se ejecuta el DAG `reliable_ods2` completo con un lote que cumple la política Crítica.
+
+| Etapa | Evidencia esperada | Archivo |
+|---|---|---|
+| Extracción | Estado de `extract_data_icbf` y `extract_data_sisben`; ICBF con 503.755 filas y Sisbén con 4.393 filas, 1 página | _[captura Airflow + `.meta.json`]_ |
+| Validación cruda | Resultado de GX de las compuertas 1 y 2 | _[captura de resultados]_ |
+| Transformación e integración | `transform_data` en verde; cobertura de llave 99,56 % (1.099 de 1.114 municipios) | _[captura / log]_ |
+| Validación de preparados | Compuerta 3 (DQ-I1 a DQ-I7) aceptada | _[captura / log]_ |
+| Carga y analítica | `fact_atencion` con 393.466 filas; consultas y dashboard | _[captura SQL + Power BI]_ |
+
+### 22.2 Prueba B — Falla Crítica controlada
+
+- **Regla activada:** _[elegir una, por ejemplo DQ-A6 (corte distinto de `SIV_2022`) o DQ-A3 (zona fuera de {1, 2})]_
+- **Cómo se introduce la falla:** _[describir, por ejemplo modificar el Parquet de staging o el valor esperado]_
+- **Comportamiento esperado:** la extracción termina, `validate_data_extract_sisben` falla, `transform_data`,
+  `validate_data_transform` y `load_data` quedan en `upstream_failed`, y el DW no cambia.
+- **Evidencia:** vista Graph o Grid, estado de la tarea fallida, resultado de GX, log de la tarea fallida y
+  explicación de la regla violada, su severidad y los requerimientos afectados (R6 y R7).
+
+### 22.3 Prueba C — Reejecución segura
+
+- **Estrategia:** la carga toma un *advisory lock*, vacía las tablas con `DELETE` (hechos antes que
+  dimensiones), inserta dimensiones y luego hechos, y reconcilia conteos y sumas dentro de la misma
+  transacción. Si algo no cuadra hace `ROLLBACK`, así que una corrida parcial o fallida no deja el DW a
+  medias.
+- **Resultado:** cada corrida deja el DW igual a la fuente, sin duplicar filas.
+- **Comparación antes y después de reejecutar el mismo lote:**
+
+| Control | Antes | Después |
+|---|---|---|
+| Filas de `fact_atencion` | _[contar]_ | _[contar]_ |
+| Filas de `fact_vulnerable_population` | _[contar]_ | _[contar]_ |
+| `SUM(total_beneficiarios)` | _[valor]_ | _[valor]_ |
+| `SUM(poblacion_ponderada)` | _[valor]_ | _[valor]_ |
+
+> Si `load_data` sigue con `recrear_esquema=True` (sección 18), la prueba C no demuestra la estrategia
+> `DELETE` + `INSERT`. Déjalo en `False` antes de ejecutarla.
+
+### 22.4 Lista de evidencia mínima
+
+| Evidencia | Dónde está |
 |---|---|
-| _[Nombre 1]_ | _[p. ej. extracción y validación]_ |
-| _[Nombre 2]_ | _[p. ej. transformación y modelo dimensional]_ |
-| _[Nombre 3]_ | _[p. ej. carga, Airflow y Docker]_ |
-| _[Nombre 4]_ | _[p. ej. Power BI y documentación]_ |
+| Estado de R1–R5 | Sección 2.1 |
+| Matriz R6–R7 | Sección 2 |
+| Diagrama de arquitectura | Sección 10 y `docs/architecture.png` |
+| Perfilamiento de ambas fuentes | `notebooks/profile.py` y `notebooks/profiling_sisben.ipynb` |
+| Riesgos y reglas de calidad | Sección 6 |
+| Extracción programática de la API | Sección 4.2 y `src/extract_sisben.py` |
+| Validación GX cruda de ambas ramas | `gx/` y sección 13.1 |
+| Transformación e integración | Secciones 8 y 9 |
+| Modelo dimensional y scripts del DW | Sección 11 y `sql/create_dw.sql` |
+| Validación de datos preparados | Sección 6.3 y `src/validation.py` |
+| DAG y ejecución exitosa | `dags/reliable_ods2.py` y sección 22.1 |
+| Falla controlada y logs | Sección 22.2 |
+| Política de reintentos | Sección 13.3 |
+| Reejecución segura | Sección 22.3 |
+| Dashboard y trazabilidad a KPI | Sección 16 |
+| Trazabilidad extremo a extremo | Sección 12.1 |
+
+## 23. Equipo y responsabilidades
+
+| Integrante | Responsabilidades |
+|---|---|
+| **Saith Gurrute** | Extracción de la API del Sisbén (`src/extract_sisben.py`). Validaciones posteriores a la extracción (compuertas crudas con Great Expectations). Diseño de los DAGs de Airflow. Configuración del `docker-compose.yaml`. Apoyo en la carga (`src/load.py`) |
+| **Samuel Arboleda** | Modificación de la transformación (`src/transform.py`). Validaciones de la transformación (compuerta 3, `src/validation.py`). Desarrollo principal de la carga (`src/load.py`). Dashboard en Power BI |
+| **Ambos** | Perfilamiento de las fuentes y análisis de sus resultados |
 
 ---
 
