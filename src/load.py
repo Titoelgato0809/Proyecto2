@@ -1,23 +1,26 @@
 """
 Carga al Data Warehouse en PostgreSQL.
 
-Recibe el diccionario de tablas que devuelve
-dimensional_model.construir_modelo() y lo carga en una sola transacción:
+Recibe el diccionario de tablas de dimensional_model.construir_modelo() y
+lo carga en UNA transacción:
 
-    1. Verifica que el esquema exista y coincida con los DataFrames.
-    2. Vacía las tablas (DELETE, hijos antes que padres).
-    3. Inserta dimensiones y luego hechos, con las llaves sustitutas
-       ya asignadas.
-    4. Reconcilia dentro de la transacción (conteos y sumas contra lo
-       que se pretendía cargar). Si algo no cuadra, ROLLBACK.
-    5. Solo entonces hace COMMIT.
+    1. Toma un candado de aplicación (advisory lock): dos cargas nunca
+       corren a la vez, así que no hay deadlocks entre ejecuciones.
+    2. Verifica que el esquema exista y coincida con los DataFrames.
+    3. Vacía las tablas (DELETE, hijos antes que padres).
+    4. Inserta dimensiones y luego hechos.
+    5. Reconcilia dentro de la transacción (conteos y sumas). Si algo no
+       cuadra, ROLLBACK: el DW queda como estaba.
 
-Es segura de re-ejecutar: cada corrida deja el DW igual a la fuente, sin
-duplicar filas. Si falla a mitad, el DW queda como estaba.
+Es segura de repetir: cada corrida deja el DW igual a la fuente, sin
+duplicar filas. La carga NUNCA recrea el esquema; eso es una acción aparte
+(crear_esquema) y destructiva.
 
-Variables de entorno (archivo .env, nunca versionado):
-    POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD,
-    POSTGRES_DB
+Variables de entorno (.env, nunca versionado). Se prefieren las DW_* para
+no confundir el DW con la base de metadatos de Airflow:
+    DW_POSTGRES_HOST, DW_POSTGRES_PORT, DW_POSTGRES_USER,
+    DW_POSTGRES_PASSWORD, DW_POSTGRES_DB
+(si no existen, se usan POSTGRES_HOST/PORT/USER/PASSWORD/DB)
 """
 
 import os
@@ -48,6 +51,7 @@ ORDEN_CARGA = [
 ]
 
 TAMANO_LOTE = 5000
+CLAVE_CANDADO = 2026102101   # identifica "carga/DDL del DW" entre procesos
 
 
 class LoadError(Exception):
@@ -58,36 +62,34 @@ class LoadError(Exception):
 # Conexión
 # ---------------------------------------------------------
 
+def _env(nombre, defecto=None):
+    return os.getenv(f"DW_{nombre}") or os.getenv(nombre) or defecto
+
+
 def _url(con_base=True):
     load_dotenv(RAIZ / ".env")
+    load_dotenv()
 
-    faltantes = [
-        v for v in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")
-        if not os.getenv(v)
-    ]
-    if faltantes:
-        raise EnvironmentError(
-            f"Faltan variables en .env: {', '.join(faltantes)}")
-
+    usuario = _env("POSTGRES_USER", "postgres")
+    clave = (_env("POSTGRES_PASSWORD", "postgres") or "").strip("\"'")
     # Para crear la base se entra a la base de mantenimiento "postgres".
-    base = os.getenv("POSTGRES_DB") if con_base else "postgres"
+    base = _env("POSTGRES_DB", "postgres") if con_base else "postgres"
 
+    # URL.create escapa @, :, / en la contraseña (un f-string no).
     return URL.create(
         "postgresql+psycopg2",
-        username=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD"),
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        username=usuario,
+        password=clave,
+        host=_env("POSTGRES_HOST", "postgres"),
+        port=int(_env("POSTGRES_PORT", "5432")),
         database=base,
     )
 
 
-def crear_engine(crear_base=True):
-    """Engine hacia la base. Si no existe, la crea."""
+def crear_engine(crear_base=False):
+    """Engine hacia el DW. Con crear_base=True crea la base si no existe."""
     if crear_base:
-        load_dotenv(RAIZ / ".env")
-        nombre = os.getenv("POSTGRES_DB")
-
+        nombre = _env("POSTGRES_DB", "postgres")
         # CREATE DATABASE no puede correr dentro de una transacción.
         servidor = create_engine(
             _url(con_base=False), isolation_level="AUTOCOMMIT")
@@ -101,6 +103,15 @@ def crear_engine(crear_base=True):
         servidor.dispose()
 
     return create_engine(_url(con_base=True), pool_pre_ping=True)
+
+
+obtener_engine = crear_engine   # nombre usado en versiones anteriores
+
+
+def _candado(con):
+    """Serializa cargas y DDL; se libera solo al terminar la transacción."""
+    con.execute(text("SELECT pg_advisory_xact_lock(:k)"),
+                {"k": CLAVE_CANDADO})
 
 
 # ---------------------------------------------------------
@@ -121,6 +132,7 @@ def crear_esquema(engine, ruta_ddl=RUTA_DDL):
         if s.strip()
     ]
     with engine.begin() as con:
+        _candado(con)
         for sentencia in sentencias:
             con.execute(text(sentencia))
     print(f"Esquema creado desde {ruta_ddl.name} "
@@ -136,7 +148,7 @@ def _verificar_esquema(engine, tablas):
     if faltan:
         raise LoadError(
             f"Faltan tablas en PostgreSQL: {faltan}. "
-            f"Ejecute cargar(..., recrear_esquema=True).")
+            f"Ejecute crear_esquema() o cargar(..., recrear_esquema=True).")
 
     for nombre in ORDEN_CARGA:
         columnas_db = {c["name"] for c in inspector.get_columns(nombre)}
@@ -146,7 +158,18 @@ def _verificar_esquema(engine, tablas):
                 f"{nombre}: el esquema de PostgreSQL no coincide con el modelo. "
                 f"Sobran en BD: {sorted(columnas_db - columnas_df)}; "
                 f"faltan en BD: {sorted(columnas_df - columnas_db)}. "
-                f"Ejecute cargar(..., recrear_esquema=True).")
+                f"Use el sql/create_dw.sql del repositorio.")
+
+
+def _verificar_entrada(tablas):
+    """Todas las tablas deben venir y tener filas: si no, es una falla."""
+    ausentes = [t for t in ORDEN_CARGA if t not in tablas]
+    vacias = [t for t in ORDEN_CARGA
+              if t in tablas and (tablas[t] is None or len(tablas[t]) == 0)]
+    if ausentes or vacias:
+        raise LoadError(
+            f"Entrada inválida para la carga. Ausentes: {ausentes}; "
+            f"vacías: {vacias}.")
 
 
 # ---------------------------------------------------------
@@ -213,8 +236,10 @@ def cargar(tablas, engine=None, recrear_esquema=False):
 
     tablas           -> dict nombre -> DataFrame (de construir_modelo)
     recrear_esquema  -> True ejecuta sql/create_dw.sql (destructivo).
+                        Por defecto False: la carga nunca borra el esquema.
     Devuelve el resumen de reconciliación.
     """
+    _verificar_entrada(tablas)
     engine = engine or crear_engine()
 
     if recrear_esquema:
@@ -223,6 +248,7 @@ def cargar(tablas, engine=None, recrear_esquema=False):
     _verificar_esquema(engine, tablas)
 
     with engine.begin() as con:     # COMMIT al salir; ROLLBACK si falla
+        _candado(con)
 
         # Vaciar: hechos antes que dimensiones (por las llaves foráneas)
         for nombre in reversed(ORDEN_CARGA):
@@ -251,13 +277,13 @@ if __name__ == "__main__":
     from extract import extraer_datos, RUTA_RAW
     from transform import transformar_fuentes
     from dimensional_model import construir_modelo
-    from validate_prepared import validate_prepared
+    from validation import validate_prepared
 
     recrear = "--recrear-esquema" in sys.argv
 
     raw_icbf = extraer_datos(RUTA_RAW)
     raw_api = pd.read_parquet(
-        RAIZ / "Data" / "staging" / "raw_sisben_agregado.parquet")
+        RAIZ / "data" / "staging" / "raw_sisben_agregado.parquet")
 
     df_icbf, df_api = transformar_fuentes(raw_icbf, raw_api)
     tablas, reporte = construir_modelo(df_icbf, df_api)
@@ -265,4 +291,5 @@ if __name__ == "__main__":
     # Compuerta 3: si hay una falla crítica, no se carga nada
     validate_prepared(df_icbf, df_api, tablas, reporte, raw_icbf, raw_api)
 
-    print(cargar(tablas, recrear_esquema=recrear))
+    print(cargar(tablas, engine=crear_engine(crear_base=True),
+                 recrear_esquema=recrear))

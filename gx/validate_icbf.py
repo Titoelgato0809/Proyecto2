@@ -378,5 +378,5 @@ def validations_icbf():
         )
 
 
-    if __name__ == "__main__":
+if __name__ == "__main__":
         validations_icbf()

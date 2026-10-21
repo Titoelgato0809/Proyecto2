@@ -1,4 +1,4 @@
-*-- =====================================================================
+-- =====================================================================
 -- Data Warehouse ICBF + Sisbén (Segunda Entrega) - PostgreSQL
 -- Esquema estrella con dimensiones conformadas (dim_municipality y
 -- dim_zone son compartidas por los dos hechos).
@@ -26,11 +26,11 @@ DROP TABLE IF EXISTS dim_geography CASCADE;
 CREATE TABLE dim_geography (
     geography_key           INTEGER      NOT NULL,
     codigo_departamento_uds INTEGER      NOT NULL,
-    departamento_uds        VARCHAR(100),
+    departamento_uds        VARCHAR(150),
     codigo_municipio_uds    INTEGER      NOT NULL,
-    municipio_uds           VARCHAR(100),
+    municipio_uds           VARCHAR(150),
     codigo_centrozonal_uds  INTEGER      NOT NULL,
-    centro_zonal_uds        VARCHAR(150),
+    centro_zonal_uds        VARCHAR(255),
     CONSTRAINT pk_dim_geography PRIMARY KEY (geography_key)
 );
 
@@ -53,11 +53,11 @@ CREATE TABLE dim_service (
 CREATE TABLE dim_beneficiary_profile (
     beneficiary_profile_key INTEGER      NOT NULL,
     sexo                    VARCHAR(20),
-    rango_edad              VARCHAR(60),
-    grupo_etnico            VARCHAR(100),
+    rango_edad              VARCHAR(100),
+    grupo_etnico            VARCHAR(255),
     presenta_discapacidad   VARCHAR(20),
-    tipo_de_beneficiario    VARCHAR(100),
-    pais_nacimiento         VARCHAR(100),
+    tipo_de_beneficiario    VARCHAR(255),
+    pais_nacimiento         VARCHAR(255),
     CONSTRAINT pk_dim_beneficiary_profile PRIMARY KEY (beneficiary_profile_key)
 );
 
@@ -76,9 +76,9 @@ CREATE TABLE dim_attention_status (
 CREATE TABLE dim_municipality (
     municipality_key        INTEGER      NOT NULL,
     codigo_municipio_dane   CHAR(5)      NOT NULL,
-    municipio               VARCHAR(100),
+    municipio               VARCHAR(150),
     codigo_departamento     CHAR(2)      NOT NULL,
-    departamento            VARCHAR(100),
+    departamento            VARCHAR(150),
     CONSTRAINT pk_dim_municipality PRIMARY KEY (municipality_key),
     CONSTRAINT uq_municipality_dane UNIQUE (codigo_municipio_dane),
     CONSTRAINT ck_municipality_dane CHECK (codigo_municipio_dane ~ '^[0-9]{5}$')
@@ -168,4 +168,4 @@ CREATE INDEX ix_fa_profile       ON fact_atencion (beneficiary_profile_key);
 CREATE INDEX ix_fa_municipality  ON fact_atencion (municipality_key);
 CREATE INDEX ix_fa_zone          ON fact_atencion (zone_key);
 CREATE INDEX ix_fp_zone          ON fact_vulnerable_population (zone_key);
-CREATE INDEX ix_fp_group         ON fact_vulnerable_population (sisben_group_key);*
+CREATE INDEX ix_fp_group         ON fact_vulnerable_population (sisben_group_key);

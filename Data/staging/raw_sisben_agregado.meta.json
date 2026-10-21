@@ -1,0 +1,15 @@
+{
+  "batch_id": "sisben_20261021T064549Z",
+  "extraido_en_utc": "2026-10-21T06:45:54.497230+00:00",
+  "endpoint": "https://www.datos.gov.co/resource/hq2v-5umk.json",
+  "consulta": {
+    "$select": "cod_mpio, zona, grupo, corte, sum(fex) as sum_fex, count(*) as count",
+    "$where": "grupo in ('A','B')",
+    "$group": "cod_mpio, zona, grupo, corte",
+    "$order": "cod_mpio, zona, grupo"
+  },
+  "filas": 4393,
+  "paginas": 1,
+  "archivo": "data/staging/raw_sisben_agregado.parquet",
+  "con_token": false
+}
