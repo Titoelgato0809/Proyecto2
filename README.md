@@ -176,15 +176,15 @@ Great Expectations en [`gx/validate_icbf.py`](gx/validate_icbf.py) y
 
 | Atributo(s) | Regla | Umbral | Severidad |
 |---|---|---|---|
-| Códigos de departamento, municipio, centro zonal y unidad de servicio | Sin nulos (completitud) | ≥ 98 % | Crítica |
+| Códigos de departamento, municipio, centro zonal y unidad de servicio | Sin nulos (completitud) | ≥ 100 % | Crítica |
 | Esos mismos códigos | Sin valores negativos (validez) | 100 % | Crítica |
-| `Beneficiarios` | Sin nulos | ≥ 98 % | Advertencia |
+| `Beneficiarios` | Sin nulos | ≥ 100 % | Advertencia |
 | `Beneficiarios` | Sin valores negativos | 100 % | Crítica |
 | `Sexo` | Solo `{M, H, I}` | 100 % | Crítica |
 | `Estado Atención` | Solo `{1, 2, A, I}` (luego se normaliza a `{A, I}`) | ≥ 95 % | Crítica |
 | `Zona Ubicacion Beneficiario` | Solo `{CABECERA, RESTO}` | ≥ 98 % | Crítica |
 | `Presenta Discapacidad` | Solo `{SI, NO}` | ≥ 98 % | Advertencia |
-| Centro zonal, municipio, departamento, grupo étnico, rango de edad, nombre y tipo de servicio, tipo de beneficiario | Sin nulos | ≥ 98 % | Crítica |
+| Centro zonal, municipio, departamento, grupo étnico, rango de edad, nombre y tipo de servicio, tipo de beneficiario | Sin nulos | ≥ 100 % | Crítica |
 | `Estado UDS` | Solo `{ACTIVA, INACTIVA}` | ≥ 98 % | Advertencia |
 
 ### 6.2 Reglas de la API del Sisbén (DQ-A)
