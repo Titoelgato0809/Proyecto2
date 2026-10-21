@@ -100,7 +100,7 @@ def validations_icbf():
         # Codigo Departamento UDS 
         Codigo_Departamento_UDS_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Codigo Departamento UDS",
-            mostly=0.98,
+            mostly=1.0,
             severity="critical",
         )
         icbf_suite.add_expectation(Codigo_Departamento_UDS_expectation)
@@ -108,7 +108,7 @@ def validations_icbf():
         # Codigo Municipio UDS
         Codigo_Municipio_UDS_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Codigo Municipio UDS",
-            mostly=0.98,
+            mostly=1.0,
             severity="critical",
         )
         icbf_suite.add_expectation(Codigo_Municipio_UDS_expectation)
@@ -116,7 +116,7 @@ def validations_icbf():
         # Codigo CentroZonal UDS
         Codigo_CentroZonal_UDS_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Codigo CentroZonal UDS",
-            mostly=0.98,
+            mostly=1.0,
             severity="critical",
         )
         icbf_suite.add_expectation(Codigo_CentroZonal_UDS_expectation)
@@ -124,7 +124,7 @@ def validations_icbf():
         # Codigo Unidad Servicio
         Codigo_Unidad_Servicio_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Codigo Unidad Servicio",
-            mostly=0.98,
+            mostly=1.0,
             severity="critical",
         )
         icbf_suite.add_expectation(Codigo_Unidad_Servicio_expectation)
@@ -159,7 +159,7 @@ def validations_icbf():
         # Centro Zonal UDS
         Centro_Zonal_UDS_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Centro Zonal UDS",
-            mostly=0.98,
+            mostly=1.0,
             severity="critical",
         )
         icbf_suite.add_expectation(Centro_Zonal_UDS_expectation)
@@ -215,7 +215,7 @@ def validations_icbf():
         # Beneficiarios (Not Null)
         Beneficiarios_expectation = gx.expectations.ExpectColumnValuesToNotBeNull(
             column="Beneficiarios",
-            mostly=0.98,
+            mostly=1.0,
             severity="warning",
         )
         icbf_suite.add_expectation(Beneficiarios_expectation)
